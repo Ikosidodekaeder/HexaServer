@@ -47,7 +47,7 @@ public class Main {
     }
 
     public void start() {
-        new Thread(() -> {
+        Thread ActiveServer = new Thread(() -> {
             while (true) {
                 Socket socket = null;
 
@@ -75,10 +75,14 @@ public class Main {
                         try { socket.close(); } catch (IOException ignored) { }
                 }
             }
-        }).start();
-        while (running) {
-
+        });
+        ActiveServer.start();
+        try {
+            ActiveServer.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
+
     }
 
     public Connection getHost(UUID uuid) {
