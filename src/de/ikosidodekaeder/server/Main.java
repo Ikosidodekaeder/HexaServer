@@ -1,11 +1,7 @@
 package de.ikosidodekaeder.server;
 
 
-import com.sun.security.ntlm.Client;
-
-import java.io.BufferedInputStream;
 import java.io.IOException;
-import java.io.ObjectInputStream;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -14,8 +10,9 @@ import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
-import java.util.Scanner;
 import java.util.UUID;
+
+
 
 /**
  * Created by Sven on 19.02.2018.
@@ -25,6 +22,8 @@ public class Main {
 
     private static final int TIME_OUT = 30_000;
 
+
+
     private ServerSocket serverSocket;
 
     private boolean running = true;
@@ -32,16 +31,57 @@ public class Main {
     private List<Connection>                hosts = new ArrayList<>();
     private Map<ClientConnection, UUID>     clientHost = new HashMap<>();
 
-    public static Map<String,Object> inspectPayload(String payload){
+    /**
+     * Depending of the content of payload, specificly the TypeId part the returned Map
+     * contains different sets of keys.
+     *
+     * Following Keys are always contained in the Map:
+     *
+     * "Packet" -> Contains the orignal payload
+     * "TypeId" -> PacketType
+     * "SourceId" -> UUID
+     * "isCancelled" -> boolean
+     * -----------------------------------|
+     * The next only for certain TypeId's |
+     * TypeId == Register                 |
+     *                                    |
+     * "Room" -> String                   |
+     * -----------------------------------|
+     * TypeId == JOIN                     |
+     *                                    |
+     * "DestinationId" -> UUID            |
+     * "Username" -> String               |
+     * "Version" -> String                |
+     *------------------------------------|
+     * TypeId == KEEPALIVE                |
+     *                                    |
+     * "SessionId" -> Integer             |
+     *------------------------------------|
+     * @param payload
+     * @return
+     */
+    public static Map<String,Object> inspectPayloadOf(String payload){
         String[] items = payload.split(";");
-        return new Hashtable<String,Object>(){{
+        Map<String,Object> tmp =new Hashtable<String,Object>(){{
             put("Packet",payload);
-           put("TypeID",PacketType.valueOf(Byte.parseByte(items[0])));
-           put("SourceId",UUID.fromString(items[1]));
-           put("isCancelled",(Boolean)items[2].equals("1"));
-           put("DestinationId",(String)items[3]);
-
+            put("TypeId",PacketType.valueOf(Byte.parseByte(items[0])));
+            put("SourceId",UUID.fromString(items[1]));
+            put("isCancelled",(Boolean)items[2].equals("1"));
         }};
+
+        switch ((PacketType)tmp.get("TypeId")){
+            case KEEPALIVE:
+                tmp.put("SessionId",(Integer.parseInt(items[3])));
+            case REGISTER:
+                tmp.put("Room",(String)items[3]);
+                break;
+            case JOIN:
+                tmp.put("DestinationId",UUID.fromString(items[3]));
+                tmp.put("Username",items[4]);
+                tmp.put("Version",items[5]);
+                break;
+        }
+        return tmp;
     }
 
     public Main() {
@@ -108,7 +148,7 @@ public class Main {
 
     void onRegister(Map<String,Object> PacketContent,Socket socket){
         UUID senderId = (UUID) PacketContent.get("SourceId");
-        UUID hostId = (UUID) PacketContent.get("DestinationId");
+        String ROOM = (String) PacketContent.get("Room");
         PacketType Type = ((PacketType)PacketContent.get("TypeId"));
 
         if (containsHost(senderId)) {
@@ -117,7 +157,7 @@ public class Main {
         }
         hosts.add(new Connection(senderId, socket));
         System.out.println("New Host registered: " + senderId.toString());
-        System.out.println("======= " + Type.name() + ", " + senderId.toString() + ", " + hostId);
+        System.out.println("======= " + Type.name() + ", " + senderId.toString() + ", " + ROOM);
     }
 
     void onKeepAlive(Connection connection, String packet){
@@ -141,7 +181,7 @@ public class Main {
 
             if ((Boolean) PacketContent.get("isCancelled")) {
                 // Remove the socket if the host did not accept
-                UUID clientId =UUID.fromString ((String)PacketContent.get("DestinationId"));
+                UUID clientId =((UUID)PacketContent.get("DestinationId"));
                 ClientConnection client = getClient(clientId);
                 try {
                     client.getSocket().close();
@@ -158,7 +198,7 @@ public class Main {
                 return;
             }
 
-            UUID hostId = UUID.fromString((String)PacketContent.get("DestinationId"));
+            UUID hostId = ((UUID)PacketContent.get("DestinationId"));
             UUID senderId = ((UUID)PacketContent.get("SourceId"));
 
             // Send it to the host
@@ -176,66 +216,40 @@ public class Main {
         }
     }
 
+
     public void handlePacket(String packet, Socket socket) {
+        Map<String,Object> PacketContent = inspectPayloadOf(packet);
+        PacketType type = ((PacketType)PacketContent.get("TypeId"));
 
-        Map<String,Object> PacketContent = inspectPayload(packet);
-
-       /* String[] arr = packet.split(";");
-        byte typeId = Byte.parseByte(arr[0]);
-        PacketType packetType = PacketType.valueOf(typeId);
-        if (packetType == null) {
-            System.out.println("======= PacketType null -> " + typeId);
-            return;
-        }
-
-        */
-
+        /*
+            try to create a connection anyway, if it succeds fine if not the appropiate end
+            will know what to do
+         */
         Connection connection = getHost((UUID)PacketContent.get("SourceId"));
-        boolean fromHost = connection != null;
-        if (fromHost) {
-            connection.setLastPacket(System.currentTimeMillis());
-        }
 
-       if(PacketContent.get("TypeId") == null)
+        if( type == null)
            return;
-        switch ((PacketType)PacketContent.get("TypeId")){
+        switch (type){
             case REGISTER:
                 onRegister(PacketContent,socket);;
                 break;
             case KEEPALIVE:
+            {
+                boolean fromHost = connection != null;
+                if (fromHost) {
+                    connection.setLastPacket(System.currentTimeMillis());
+                }
                 onKeepAlive(connection,packet);
                 break;
+            }
             case JOIN:
+            {
                 onJoin(connection,socket,PacketContent);
                 break;
+            }
             default:
                 return;
         }
-        /*
-                UUID senderId = UUID.fromString(arr[1]);
-                System.out.println("Sender id: " + senderId + " /// " + packetType.name());
-
-                boolean cancelled = arr[2].equals("1");
-        */
-
-        /*
-        if (PacketContent.get("TypeId") == PacketType.REGISTER) {
-            onRegister(PacketContent,socket);;
-        }
-
-        Connection connection = getHost((UUID)PacketContent.get("SourceId"));
-        boolean fromHost = connection != null;
-        if (fromHost) {
-            connection.setLastPacket(System.currentTimeMillis());
-        }
-        if (PacketContent.get("TypeId") == PacketType.KEEPALIVE) {
-            onKeepAlive(connection,packet);
-        } else if (PacketContent.get("TypeId") == PacketType.JOIN) {
-            onJoin(connection,socket,PacketContent);
-        }*/
-
-
-
     }
 
     public void broadcastToClients(Connection host, String packet) {
