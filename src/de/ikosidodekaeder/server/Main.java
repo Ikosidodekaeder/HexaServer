@@ -11,6 +11,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
@@ -31,6 +32,17 @@ public class Main {
     private List<Connection>                hosts = new ArrayList<>();
     private Map<ClientConnection, UUID>     clientHost = new HashMap<>();
 
+    public static Map<String,Object> inspectPayload(String payload){
+        String[] items = payload.split(";");
+        return new Hashtable<String,Object>(){{
+            put("Packet",payload);
+           put("TypeID",PacketType.valueOf(Byte.parseByte(items[0])));
+           put("SourceId",UUID.fromString(items[1]));
+           put("isCancelled",(Boolean)items[2].equals("1"));
+           put("DestinationId",(String)items[3]);
+
+        }};
+    }
 
     public Main() {
         try {
@@ -94,8 +106,81 @@ public class Main {
         return getClient(uuid) != null;
     }
 
+    void onRegister(Map<String,Object> PacketContent,Socket socket){
+        UUID senderId = (UUID) PacketContent.get("SourceId");
+        UUID hostId = (UUID) PacketContent.get("DestinationId");
+        PacketType Type = ((PacketType)PacketContent.get("TypeId"));
+
+        if (containsHost(senderId)) {
+            System.out.println("Host already connected");
+            return;
+        }
+        hosts.add(new Connection(senderId, socket));
+        System.out.println("New Host registered: " + senderId.toString());
+        System.out.println("======= " + Type.name() + ", " + senderId.toString() + ", " + hostId);
+    }
+
+    void onKeepAlive(Connection connection, String packet){
+        if (connection != null) {
+            // If this packet was sent from the host
+            // send keep alive to all clients
+            broadcastToClients(connection, packet);
+        } else {
+            // If this packet was sent from a client
+            // send to host
+        }
+    }
+
+    void onJoin(Connection connection,Socket socket,Map<String,Object> PacketContent){
+        if (connection !=  null) {
+            System.out.println("Join From Host");
+            // If this packet was sent from the host
+            // send join to all clients
+            broadcastToClients(connection,(String) PacketContent.get("Packet"));
+
+
+            if ((Boolean) PacketContent.get("isCancelled")) {
+                // Remove the socket if the host did not accept
+                UUID clientId =UUID.fromString ((String)PacketContent.get("DestinationId"));
+                ClientConnection client = getClient(clientId);
+                try {
+                    client.getSocket().close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                clientHost.remove(client);
+            }
+        } else {
+            // If this packet was sent from a client
+            // Store the socket
+            if (containsClient(((UUID)PacketContent.get("SourceId")))) {
+                System.out.println(((UUID)PacketContent.get("SourceId")) + " already connected");
+                return;
+            }
+
+            UUID hostId = UUID.fromString((String)PacketContent.get("DestinationId"));
+            UUID senderId = ((UUID)PacketContent.get("SourceId"));
+
+            // Send it to the host
+            Connection host = getHost(hostId);
+            if (host != null) {
+                ClientConnection clientConnection = new ClientConnection(senderId, socket);
+                clientHost.put(clientConnection, senderId);
+                System.out.println("Registered new client: " + senderId);
+
+                sendToHost(host, ((String)PacketContent.get("Packet")));
+                System.out.println("Sent to host");
+            } else {
+                System.out.println("Error, host null");
+            }
+        }
+    }
+
     public void handlePacket(String packet, Socket socket) {
-        String[] arr = packet.split(";");
+
+        Map<String,Object> PacketContent = inspectPayload(packet);
+
+       /* String[] arr = packet.split(";");
         byte typeId = Byte.parseByte(arr[0]);
         PacketType packetType = PacketType.valueOf(typeId);
         if (packetType == null) {
@@ -103,77 +188,51 @@ public class Main {
             return;
         }
 
-        UUID senderId = UUID.fromString(arr[1]);
-        System.out.println("Sender id: " + senderId + " /// " + packetType.name());
+        */
 
-        boolean cancelled = arr[2].equals("1");
-
-        if (packetType == PacketType.REGISTER) {
-            if (containsHost(senderId)) {
-                System.out.println("Host already connected");
-                return;
-            }
-            hosts.add(new Connection(senderId, socket));
-            System.out.println("New Host registered: " + senderId.toString());
-            System.out.println("======= " + packetType.name() + ", " + senderId.toString() + ", " + arr[3]);
-            return;
-        }
-        Connection connection = getHost(senderId);
+        Connection connection = getHost((UUID)PacketContent.get("SourceId"));
         boolean fromHost = connection != null;
         if (fromHost) {
             connection.setLastPacket(System.currentTimeMillis());
         }
-        if (packetType == PacketType.KEEPALIVE) {
-            if (fromHost) {
-                // If this packet was sent from the host
-                // send keep alive to all clients
-                broadcastToClients(connection, packet);
-            } else {
-                // If this packet was sent from a client
-                // send to host
-            }
-        } else if (packetType == PacketType.JOIN) {
-            if (fromHost) {
-                System.out.println("Join From Host");
-                // If this packet was sent from the host
-                // send join to all clients
-                broadcastToClients(connection, packet);
 
-                if (cancelled) {
-                    // Remove the socket if the host did not accept
-                    UUID clientId = UUID.fromString(arr[3]);
-                    ClientConnection client = getClient(clientId);
-                    try {
-                        client.getSocket().close();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    clientHost.remove(client);
-                }
-            } else {
-                // If this packet was sent from a client
-                // Store the socket
-                if (containsClient(senderId)) {
-                    System.out.println(senderId + " already connected");
-                    return;
-                }
-
-                UUID hostId = UUID.fromString(arr[3]);
-
-                // Send it to the host
-                Connection host = getHost(hostId);
-                if (host != null) {
-                    ClientConnection clientConnection = new ClientConnection(senderId, socket);
-                    clientHost.put(clientConnection, senderId);
-                    System.out.println("Registered new client: " + senderId);
-
-                    sendToHost(host, packet);
-                    System.out.println("Sent to host");
-                } else {
-                    System.out.println("Error, host null");
-                }
-            }
+       if(PacketContent.get("TypeId") == null)
+           return;
+        switch ((PacketType)PacketContent.get("TypeId")){
+            case REGISTER:
+                onRegister(PacketContent,socket);;
+                break;
+            case KEEPALIVE:
+                onKeepAlive(connection,packet);
+                break;
+            case JOIN:
+                onJoin(connection,socket,PacketContent);
+                break;
+            default:
+                return;
         }
+        /*
+                UUID senderId = UUID.fromString(arr[1]);
+                System.out.println("Sender id: " + senderId + " /// " + packetType.name());
+
+                boolean cancelled = arr[2].equals("1");
+        */
+
+        /*
+        if (PacketContent.get("TypeId") == PacketType.REGISTER) {
+            onRegister(PacketContent,socket);;
+        }
+
+        Connection connection = getHost((UUID)PacketContent.get("SourceId"));
+        boolean fromHost = connection != null;
+        if (fromHost) {
+            connection.setLastPacket(System.currentTimeMillis());
+        }
+        if (PacketContent.get("TypeId") == PacketType.KEEPALIVE) {
+            onKeepAlive(connection,packet);
+        } else if (PacketContent.get("TypeId") == PacketType.JOIN) {
+            onJoin(connection,socket,PacketContent);
+        }*/
 
 
 
