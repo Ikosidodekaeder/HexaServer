@@ -1,6 +1,8 @@
 package de.ikosidodekaeder.server;
 
 
+import com.sun.security.ntlm.Client;
+
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.ObjectInputStream;
@@ -47,42 +49,23 @@ public class Main {
     }
 
     public void start() {
-        Thread ActiveServer = new Thread(() -> {
-            while (true) {
-                Socket socket = null;
-
-                removeInactive();
-
-                try {
-                    System.out.println("Now accepting");
-                    socket = serverSocket.accept();
-                    //ObjectInputStream in = new ObjectInputStream(client.getInputStream());
-                    Scanner in  = new Scanner(socket.getInputStream());
-                    System.out.println("Received!");
-                    //BufferedInputStream in = new BufferedInputStream(client.getInputStream());
-                    System.out.println("Reading...");
-
-                    while (in.hasNext()) {
-                        String packet = in.nextLine();
-                        System.out.println("Received packet " + packet);
-                        handlePacket(packet, socket);
-                    }
-
-                } catch (IOException e) {
-                    e.printStackTrace();
-                } finally {
-                    if (socket != null)
-                        try { socket.close(); } catch (IOException ignored) { }
-                }
+        while (true) {
+            Socket socket = null;
+            System.out.println("Now accepting");
+            try {
+                socket = serverSocket.accept();
+                Thread thread = new Thread(new ListenThread(this, socket));
+                thread.start();
+            } catch (IOException e) {
+                e.printStackTrace();
             }
-        });
-        ActiveServer.start();
+        }
+        /*ActiveServer.start();
         try {
             ActiveServer.join();
         } catch (InterruptedException e) {
             e.printStackTrace();
-        }
-
+        }*/
     }
 
     public Connection getHost(UUID uuid) {
@@ -98,6 +81,19 @@ public class Main {
         return getHost(uuid) != null;
     }
 
+    public ClientConnection getClient(UUID uuid) {
+        for (ClientConnection connection : clientHost.keySet()) {
+            if (connection.getUuid().equals(uuid)) {
+                return connection;
+            }
+        }
+        return null;
+    }
+
+    public boolean containsClient(UUID uuid) {
+        return getClient(uuid) != null;
+    }
+
     public void handlePacket(String packet, Socket socket) {
         String[] arr = packet.split(";");
         byte typeId = Byte.parseByte(arr[0]);
@@ -107,23 +103,28 @@ public class Main {
             return;
         }
 
-        UUID clientId = UUID.fromString(arr[1]);
+        UUID senderId = UUID.fromString(arr[1]);
+        System.out.println("Sender id: " + senderId + " /// " + packetType.name());
+
+        boolean cancelled = arr[2].equals("1");
 
         if (packetType == PacketType.REGISTER) {
-            if (containsHost(clientId)) {
+            if (containsHost(senderId)) {
                 System.out.println("Host already connected");
                 return;
             }
-            hosts.add(new Connection(clientId, socket));
-            System.out.println("======= " + packetType.name() + ", " + clientId.toString() + ", " + arr[3]);
+            hosts.add(new Connection(senderId, socket));
+            System.out.println("New Host registered: " + senderId.toString());
+            System.out.println("======= " + packetType.name() + ", " + senderId.toString() + ", " + arr[3]);
             return;
         }
-        Connection connection = getHost(clientId);
-        if (connection != null) {
+        Connection connection = getHost(senderId);
+        boolean fromHost = connection != null;
+        if (fromHost) {
             connection.setLastPacket(System.currentTimeMillis());
         }
         if (packetType == PacketType.KEEPALIVE) {
-            if (connection != null) {
+            if (fromHost) {
                 // If this packet was sent from the host
                 // send keep alive to all clients
                 broadcastToClients(connection, packet);
@@ -132,13 +133,45 @@ public class Main {
                 // send to host
             }
         } else if (packetType == PacketType.JOIN) {
-            if (connection != null) {
+            if (fromHost) {
+                System.out.println("Join From Host");
                 // If this packet was sent from the host
                 // send join to all clients
-                // and add to clientHosts map
+                broadcastToClients(connection, packet);
+
+                if (cancelled) {
+                    // Remove the socket if the host did not accept
+                    UUID clientId = UUID.fromString(arr[3]);
+                    ClientConnection client = getClient(clientId);
+                    try {
+                        client.getSocket().close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                    clientHost.remove(client);
+                }
             } else {
                 // If this packet was sent from a client
+                // Store the socket
+                if (containsClient(senderId)) {
+                    System.out.println(senderId + " already connected");
+                    return;
+                }
+
+                UUID hostId = UUID.fromString(arr[3]);
+
                 // Send it to the host
+                Connection host = getHost(hostId);
+                if (host != null) {
+                    ClientConnection clientConnection = new ClientConnection(senderId, socket);
+                    clientHost.put(clientConnection, senderId);
+                    System.out.println("Registered new client: " + senderId);
+
+                    sendToHost(host, packet);
+                    System.out.println("Sent to host");
+                } else {
+                    System.out.println("Error, host null");
+                }
             }
         }
 
@@ -163,8 +196,12 @@ public class Main {
     }
 
     public void sendToHost(Connection host, String packet) {
-        // print writer
-        // out -> send packet
+        try {
+            PrintWriter out = new PrintWriter(host.getSocket().getOutputStream(), true);
+            out.println(packet);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     private List<Connection> toRemove = new ArrayList<>();
@@ -173,7 +210,8 @@ public class Main {
      * Removes inactive hosts
      */
     public void removeInactive() {
-        for (Connection connection : hosts) {
+        // TODO: Nur für Testingzwecke auskommentiert
+        /*for (Connection connection : hosts) {
             if (System.currentTimeMillis() - connection.getLastPacket() >= TIME_OUT) {
                 toRemove.add(connection);
                 System.out.println("Removed " + connection.getUuid());
@@ -183,7 +221,7 @@ public class Main {
         if (!hosts.isEmpty()) {
             hosts.removeAll(toRemove);
             toRemove.clear();
-        }
+        }*/
     }
 
 }
