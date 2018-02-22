@@ -12,11 +12,13 @@ public class Connection {
     private UUID uuid;
     private long lastPacket = 0;
     private Socket socket;
+    private String roomName = "NullRoom";
 
-    public Connection(UUID uuid, Socket socket) {
+    public Connection(UUID uuid, Socket socket, String roomName) {
         this.uuid = uuid;
         lastPacket = System.currentTimeMillis();
         this.socket = socket;
+        this.roomName = roomName;
     }
 
     public UUID getUuid() {
@@ -41,5 +43,13 @@ public class Connection {
 
     public void setSocket(Socket socket) {
         this.socket = socket;
+    }
+
+    public String getRoomName() {
+        return roomName;
+    }
+
+    public void setRoomName(String roomName) {
+        this.roomName = roomName;
     }
 }

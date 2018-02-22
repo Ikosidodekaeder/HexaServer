@@ -61,10 +61,10 @@ public class Main {
     public static Map<String,Object> inspectPayloadOf(String payload){
         String[] items = payload.split(";");
         Map<String,Object> tmp =new Hashtable<String,Object>(){{
-            put("Packet",payload);
-            put("TypeId",PacketType.valueOf(Byte.parseByte(items[0])));
-            put("SourceId",UUID.fromString(items[1]));
-            put("isCancelled",(Boolean)items[2].equals("1"));
+            put("Packet", payload);                                         // Whole serialized packet
+            put("TypeId", PacketType.valueOf(Byte.parseByte(items[0])));    // Type of the packet
+            put("SourceId", UUID.fromString(items[1]));                     // Sender UUID
+            put("isCancelled", items[2].equals("1"));                       // Tells the client if allowed or not
         }};
 
         switch ((PacketType)tmp.get("TypeId")){
@@ -77,6 +77,8 @@ public class Main {
                 tmp.put("DestinationId",UUID.fromString(items[3]));
                 tmp.put("Username",items[4]);
                 tmp.put("Version",items[5]);
+                break;
+            case SERVER_LIST:
                 break;
         }
         return tmp;
@@ -140,16 +142,16 @@ public class Main {
 
     void onRegister(Map<String,Object> PacketContent,Socket socket){
         UUID senderId = (UUID) PacketContent.get("SourceId");
-        String ROOM = (String) PacketContent.get("Room");
+        String roomName = (String) PacketContent.get("Room");
         PacketType Type = ((PacketType)PacketContent.get("TypeId"));
 
         if (containsHost(senderId)) {
             System.out.println("Host already connected");
             return;
         }
-        hosts.add(new Connection(senderId, socket));
+        hosts.add(new Connection(senderId, socket, roomName));
         System.out.println("New Host registered: " + senderId.toString());
-        System.out.println("======= " + Type.name() + ", " + senderId.toString() + ", " + ROOM);
+        System.out.println("======= " + Type.name() + ", " + senderId.toString() + ", " + roomName);
     }
 
     void onKeepAlive(Connection connection, String packet){
@@ -208,6 +210,19 @@ public class Main {
         }
     }
 
+    public void onServerList(UUID sender, Socket socket) {
+        StringBuilder packetPayload = new StringBuilder();
+        packetPayload
+                .append(PacketType.SERVER_LIST.ID).append(";")
+                .append(sender.toString()).append(";")
+                .append("0;");
+        for (Connection connection : hosts) {
+            packetPayload
+                    .append(connection.getUuid().toString()).append(",")
+                    .append(connection.getRoomName()).append(";");
+        }
+        sendPacketToClient(socket, packetPayload.toString());
+    }
 
     public void handlePacket(String packet, Socket socket) {
         Map<String,Object> PacketContent = inspectPayloadOf(packet);
@@ -219,11 +234,11 @@ public class Main {
          */
         Connection connection = getHost((UUID)PacketContent.get("SourceId"));
 
-        if( type == null)
+        if (type == null)
            return;
         switch (type){
             case REGISTER:
-                onRegister(PacketContent,socket);;
+                onRegister(PacketContent,socket);
                 break;
             case KEEPALIVE:
             {
@@ -239,6 +254,9 @@ public class Main {
                 onJoin(connection,socket,PacketContent);
                 break;
             }
+            case SERVER_LIST:
+                onServerList((UUID)PacketContent.get("SourceId"), socket);
+                break;
             default:
                 return;
         }
@@ -257,6 +275,15 @@ public class Main {
             } catch (IOException e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    public void sendPacketToClient(Socket socket, String packet) {
+        try {
+            PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+            out.println(packet);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 
