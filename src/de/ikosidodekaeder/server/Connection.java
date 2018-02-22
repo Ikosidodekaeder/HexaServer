@@ -11,10 +11,12 @@ public class Connection {
 
     private UUID uuid;
     private Socket socket;
+    private long lastPacket = 0;
 
     public Connection(UUID uuid, Socket socket) {
         this.uuid = uuid;
         this.socket = socket;
+        lastPacket = System.currentTimeMillis();
     }
 
     public UUID getUuid() {
@@ -31,5 +33,13 @@ public class Connection {
 
     public void setSocket(Socket socket) {
         this.socket = socket;
+    }
+
+    public long getLastPacket() {
+        return lastPacket;
+    }
+
+    public void setLastPacket(long lastPacket) {
+        this.lastPacket = lastPacket;
     }
 }

@@ -100,11 +100,14 @@ public class Main {
     }
 
     public void start() {
+        System.out.println("Started listening...");
         while (true) {
             Socket socket = null;
-            System.out.println("Now accepting");
             try {
                 socket = serverSocket.accept();
+
+                removeInactive();
+
                 Thread thread = new Thread(new ListenThread(this, socket));
                 thread.start();
             } catch (IOException e) {
@@ -120,6 +123,16 @@ public class Main {
             }
         }
         return null;
+    }
+
+    public HostConnection getHostFromClient(UUID clientUuid) {
+        ClientConnection clientConnection = getClient(clientUuid);
+        if (clientConnection == null) {
+            return null;
+        }
+        UUID hostUuid = clientHost.get(clientConnection);
+        HostConnection hostConnection = getHost(hostUuid);
+        return hostConnection;
     }
 
     public boolean containsHost(UUID uuid) {
@@ -153,14 +166,23 @@ public class Main {
         System.out.println("======= " + Type.name() + ", " + senderId.toString() + ", " + roomName);
     }
 
-    void onKeepAlive(HostConnection hostConnection, String packet){
-        if (hostConnection != null) {
+    void onKeepAlive(HostConnection hostConnection, Map<String,Object> packetContent, boolean fromHost){
+
+        if (fromHost) {
             // If this packet was sent from the host
             // send keep alive to all clients
-            broadcastToClients(hostConnection, packet);
+            broadcastToClients(hostConnection, (String) packetContent.get("Packet"));
+            sendToHost(hostConnection, (String) packetContent.get("Packet"));
         } else {
             // If this packet was sent from a client
             // send to host
+            UUID senderId = (UUID) packetContent.get("SourceId");
+            hostConnection = getHostFromClient(senderId);
+            if (hostConnection != null) {
+                sendToHost(hostConnection, (String) packetContent.get("Packet"));
+            } else {
+                System.out.println("Found no host when returning client keep alive");
+            }
         }
     }
 
@@ -224,37 +246,42 @@ public class Main {
     }
 
     public void handlePacket(String packet, Socket socket) {
-        Map<String,Object> PacketContent = inspectPayloadOf(packet);
-        PacketType type = ((PacketType)PacketContent.get("TypeId"));
+        Map<String,Object> packetContent = inspectPayloadOf(packet);
+        PacketType type = ((PacketType)packetContent.get("TypeId"));
 
         /*
             try to create a hostConnection anyway, if it succeds fine if not the appropiate end
             will know what to do
          */
-        HostConnection hostConnection = getHost((UUID)PacketContent.get("SourceId"));
+        HostConnection hostConnection = getHost((UUID)packetContent.get("SourceId"));
+        if (hostConnection != null) {
+            hostConnection.setLastPacket(System.currentTimeMillis());
+        } else {
+            ClientConnection clientConnection = getClient((UUID)packetContent.get("SourceId"));
+            if (clientConnection != null) {
+                clientConnection.setLastPacket(System.currentTimeMillis());
+            }
+        }
 
         if (type == null)
            return;
         switch (type){
             case REGISTER:
-                onRegister(PacketContent,socket);
+                onRegister(packetContent,socket);
                 break;
             case KEEPALIVE:
             {
                 boolean fromHost = hostConnection != null;
-                if (fromHost) {
-                    hostConnection.setLastPacket(System.currentTimeMillis());
-                }
-                onKeepAlive(hostConnection,packet);
+                onKeepAlive(hostConnection, packetContent, fromHost);
                 break;
             }
             case JOIN:
             {
-                onJoin(hostConnection,socket,PacketContent);
+                onJoin(hostConnection,socket,packetContent);
                 break;
             }
             case SERVER_LIST:
-                onServerList((UUID)PacketContent.get("SourceId"), socket);
+                onServerList((UUID)packetContent.get("SourceId"), socket);
                 break;
             default:
                 return;
@@ -306,13 +333,25 @@ public class Main {
     public void removeInactive() {
         // Check if any host sockets are closed
         for (ClientConnection connection : clientHost.keySet()) {
-            if (connection.getSocket().isClosed()) {
+            if (System.currentTimeMillis() - connection.getLastPacket() >= TIME_OUT) {
+                System.out.println("Removing Client " + connection.getUuid().toString());
+                try {
+                    connection.getSocket().close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
                 toRemoveClients.add(connection);
             }
         }
         // Check if any client sockets are closed
         for (HostConnection connection : hosts) {
-            if (connection.getSocket().isClosed()) {
+            if (System.currentTimeMillis() - connection.getLastPacket() >= TIME_OUT) {
+                System.out.println("Removing Host " + connection.getUuid().toString());
+                try {
+                    connection.getSocket().close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
                 toRemoveHosts.add(connection);
             }
         }

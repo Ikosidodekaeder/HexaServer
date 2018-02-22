@@ -25,16 +25,23 @@ public class ListenThread implements Runnable {
     @Override
     public void run() {
         System.out.println("Started new thread");
+        Scanner in  = null;
+        try {
+            in = new Scanner(socket.getInputStream());
+        } catch (IOException e) {
+            e.printStackTrace();
+            return;
+        }
         while (running) {
 
             try {
-                socket.setSoTimeout(Main.TIME_OUT);
-                Scanner in  = new Scanner(socket.getInputStream());
 
                 int received = 0;
 
+                socket.setSoTimeout(Main.TIME_OUT);
                 while (in.hasNext()) {
                     received++;
+                    socket.setSoTimeout(Main.TIME_OUT);
                     String packet = in.nextLine();
                     System.out.println("Received packet " + packet);
                     owner.handlePacket(packet, socket);
@@ -45,10 +52,11 @@ public class ListenThread implements Runnable {
                     System.out.println("================== STOPPING THREAD ==================");
                 }
 
-            } catch (SocketTimeoutException e) {
+
+
+            } catch (IOException e) {
                 System.out.println("==== Socket Timeout (30 seconds) ====");
                 running = false;
-            } catch (IOException e) {
                 e.printStackTrace();
             }/* finally {
                     if (socket != null)
@@ -61,7 +69,6 @@ public class ListenThread implements Runnable {
         } catch (IOException e) {
             e.printStackTrace();
         }
-
 
     }
 
