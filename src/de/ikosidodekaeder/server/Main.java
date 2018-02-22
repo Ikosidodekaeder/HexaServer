@@ -21,15 +21,13 @@ import java.util.UUID;
 public class Main {
 
     private static final int TIME_OUT = 30_000;
-
-
-
     private ServerSocket serverSocket;
 
     private boolean running = true;
 
     private List<Connection>                hosts = new ArrayList<>();
     private Map<ClientConnection, UUID>     clientHost = new HashMap<>();
+    private List<Connection>                toRemove = new ArrayList<>();
 
     /**
      * Depending of the content of payload, specificly the TypeId part the returned Map
@@ -112,12 +110,6 @@ public class Main {
                 e.printStackTrace();
             }
         }
-        /*ActiveServer.start();
-        try {
-            ActiveServer.join();
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }*/
     }
 
     public Connection getHost(UUID uuid) {
@@ -277,7 +269,7 @@ public class Main {
         }
     }
 
-    private List<Connection> toRemove = new ArrayList<>();
+
 
     /**
      * Removes inactive hosts
