@@ -2,6 +2,7 @@ package de.ikosidodekaeder.server;
 
 import java.io.IOException;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.Scanner;
 
 /**
@@ -18,6 +19,7 @@ public class ListenThread implements Runnable {
     public ListenThread(Main owner, Socket socket) {
         this.owner = owner;
         this.socket = socket;
+
     }
 
     @Override
@@ -25,16 +27,9 @@ public class ListenThread implements Runnable {
         System.out.println("Started new thread");
         while (running) {
 
-            owner.removeInactive();
-
             try {
+                socket.setSoTimeout(Main.TIME_OUT);
                 Scanner in  = new Scanner(socket.getInputStream());
-                //BufferedInputStream in = new BufferedInputStream(client.getInputStream());
-                System.out.println("Reading... "
-                        + socket.isConnected() + ", "
-                        + socket.isBound() + ", "
-                        + socket.isClosed() + ", "
-                        + socket.isInputShutdown());
 
                 int received = 0;
 
@@ -50,6 +45,9 @@ public class ListenThread implements Runnable {
                     System.out.println("================== STOPPING THREAD ==================");
                 }
 
+            } catch (SocketTimeoutException e) {
+                System.out.println("==== Socket Timeout (30 seconds) ====");
+                running = false;
             } catch (IOException e) {
                 e.printStackTrace();
             }/* finally {
@@ -63,6 +61,8 @@ public class ListenThread implements Runnable {
         } catch (IOException e) {
             e.printStackTrace();
         }
+
+
     }
 
     public boolean isRunning() {

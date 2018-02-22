@@ -20,14 +20,13 @@ import java.util.UUID;
 
 public class Main {
 
-    private static final int TIME_OUT = 30_000;
+    public static final int TIME_OUT = 30_000;
     private ServerSocket serverSocket;
 
     private boolean running = true;
 
-    private List<Connection>                hosts = new ArrayList<>();
+    private List<HostConnection>            hosts = new ArrayList<>();
     private Map<ClientConnection, UUID>     clientHost = new HashMap<>();
-    private List<Connection>                toRemove = new ArrayList<>();
 
     /**
      * Depending of the content of payload, specificly the TypeId part the returned Map
@@ -114,10 +113,10 @@ public class Main {
         }
     }
 
-    public Connection getHost(UUID uuid) {
-        for (Connection connection : hosts) {
-            if (connection.getUuid().equals(uuid)) {
-                return connection;
+    public HostConnection getHost(UUID uuid) {
+        for (HostConnection hostConnection : hosts) {
+            if (hostConnection.getUuid().equals(uuid)) {
+                return hostConnection;
             }
         }
         return null;
@@ -149,28 +148,28 @@ public class Main {
             System.out.println("Host already connected");
             return;
         }
-        hosts.add(new Connection(senderId, socket, roomName));
+        hosts.add(new HostConnection(senderId, socket, roomName));
         System.out.println("New Host registered: " + senderId.toString());
         System.out.println("======= " + Type.name() + ", " + senderId.toString() + ", " + roomName);
     }
 
-    void onKeepAlive(Connection connection, String packet){
-        if (connection != null) {
+    void onKeepAlive(HostConnection hostConnection, String packet){
+        if (hostConnection != null) {
             // If this packet was sent from the host
             // send keep alive to all clients
-            broadcastToClients(connection, packet);
+            broadcastToClients(hostConnection, packet);
         } else {
             // If this packet was sent from a client
             // send to host
         }
     }
 
-    void onJoin(Connection connection,Socket socket,Map<String,Object> PacketContent){
-        if (connection !=  null) {
+    void onJoin(HostConnection hostConnection, Socket socket, Map<String,Object> PacketContent){
+        if (hostConnection !=  null) {
             System.out.println("Join From Host");
             // If this packet was sent from the host
             // send join to all clients
-            broadcastToClients(connection,(String) PacketContent.get("Packet"));
+            broadcastToClients(hostConnection,(String) PacketContent.get("Packet"));
 
 
             if ((Boolean) PacketContent.get("isCancelled")) {
@@ -196,7 +195,7 @@ public class Main {
             UUID senderId = ((UUID)PacketContent.get("SourceId"));
 
             // Send it to the host
-            Connection host = getHost(hostId);
+            HostConnection host = getHost(hostId);
             if (host != null) {
                 ClientConnection clientConnection = new ClientConnection(senderId, socket);
                 clientHost.put(clientConnection, senderId);
@@ -216,10 +215,10 @@ public class Main {
                 .append(PacketType.SERVER_LIST.ID).append(";")
                 .append(sender.toString()).append(";")
                 .append("0;");
-        for (Connection connection : hosts) {
+        for (HostConnection hostConnection : hosts) {
             packetPayload
-                    .append(connection.getUuid().toString()).append(",")
-                    .append(connection.getRoomName()).append(";");
+                    .append(hostConnection.getUuid().toString()).append(",")
+                    .append(hostConnection.getRoomName()).append(";");
         }
         sendPacketToClient(socket, packetPayload.toString());
     }
@@ -229,10 +228,10 @@ public class Main {
         PacketType type = ((PacketType)PacketContent.get("TypeId"));
 
         /*
-            try to create a connection anyway, if it succeds fine if not the appropiate end
+            try to create a hostConnection anyway, if it succeds fine if not the appropiate end
             will know what to do
          */
-        Connection connection = getHost((UUID)PacketContent.get("SourceId"));
+        HostConnection hostConnection = getHost((UUID)PacketContent.get("SourceId"));
 
         if (type == null)
            return;
@@ -242,16 +241,16 @@ public class Main {
                 break;
             case KEEPALIVE:
             {
-                boolean fromHost = connection != null;
+                boolean fromHost = hostConnection != null;
                 if (fromHost) {
-                    connection.setLastPacket(System.currentTimeMillis());
+                    hostConnection.setLastPacket(System.currentTimeMillis());
                 }
-                onKeepAlive(connection,packet);
+                onKeepAlive(hostConnection,packet);
                 break;
             }
             case JOIN:
             {
-                onJoin(connection,socket,PacketContent);
+                onJoin(hostConnection,socket,PacketContent);
                 break;
             }
             case SERVER_LIST:
@@ -262,7 +261,7 @@ public class Main {
         }
     }
 
-    public void broadcastToClients(Connection host, String packet) {
+    public void broadcastToClients(HostConnection host, String packet) {
         for (ClientConnection client : clientHost.keySet()) {
             UUID hostUuid = clientHost.get(client);
             if (hostUuid.equals(host.getUuid())) {
@@ -287,7 +286,7 @@ public class Main {
         }
     }
 
-    public void sendToHost(Connection host, String packet) {
+    public void sendToHost(HostConnection host, String packet) {
         try {
             PrintWriter out = new PrintWriter(host.getSocket().getOutputStream(), true);
             out.println(packet);
@@ -298,22 +297,46 @@ public class Main {
 
 
 
+    private List<ClientConnection>              toRemoveClients = new ArrayList<>();
+    private List<HostConnection>                toRemoveHosts   = new ArrayList<>();
+
     /**
-     * Removes inactive hosts
+     * Removes clients and hosts with closed sockets
      */
     public void removeInactive() {
-        // TODO: Nur für Testingzwecke auskommentiert
-        /*for (Connection connection : hosts) {
-            if (System.currentTimeMillis() - connection.getLastPacket() >= TIME_OUT) {
-                toRemove.add(connection);
-                System.out.println("Removed " + connection.getUuid());
+        // Check if any host sockets are closed
+        for (ClientConnection connection : clientHost.keySet()) {
+            if (connection.getSocket().isClosed()) {
+                toRemoveClients.add(connection);
+            }
+        }
+        // Check if any client sockets are closed
+        for (HostConnection connection : hosts) {
+            if (connection.getSocket().isClosed()) {
+                toRemoveHosts.add(connection);
             }
         }
 
-        if (!hosts.isEmpty()) {
-            hosts.removeAll(toRemove);
-            toRemove.clear();
-        }*/
+        // Remove all clients
+        if (!toRemoveClients.isEmpty()) {
+            for (ClientConnection clientConnection : toRemoveClients) {
+                clientHost.remove(clientConnection);
+            }
+            toRemoveClients.clear();
+        }
+
+        // Remove all hosts
+        if (!toRemoveHosts.isEmpty()) {
+            hosts.removeAll(toRemoveHosts);
+            toRemoveHosts.clear();
+        }
     }
 
+    public boolean isRunning() {
+        return running;
+    }
+
+    public Map<ClientConnection, UUID> getClientHost() {
+        return clientHost;
+    }
 }
