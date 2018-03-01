@@ -191,12 +191,12 @@ public class Main {
             System.out.println("Join From Host");
             // If this packet was sent from the host
             // send join to all clients
-            broadcastToClients(hostConnection,(String) PacketContent.get("Packet"));
+            broadcastToClients(hostConnection, (String) PacketContent.get("Packet"));
 
 
             if ((Boolean) PacketContent.get("isCancelled")) {
                 // Remove the socket if the host did not accept
-                UUID clientId =((UUID)PacketContent.get("DestinationId"));
+                UUID clientId = ((UUID)PacketContent.get("DestinationId"));
                 ClientConnection client = getClient(clientId);
                 try {
                     client.getSocket().close();
@@ -220,11 +220,11 @@ public class Main {
             HostConnection host = getHost(hostId);
             if (host != null) {
                 ClientConnection clientConnection = new ClientConnection(senderId, socket);
-                clientHost.put(clientConnection, senderId);
+                clientHost.put(clientConnection, hostId);
                 System.out.println("Registered new client: " + senderId);
 
                 sendToHost(host, ((String)PacketContent.get("Packet")));
-                System.out.println("Sent to host");
+                System.out.println("### Sent to host: " + ((String)PacketContent.get("Packet")));
             } else {
                 System.out.println("Error, host null");
             }
@@ -243,6 +243,33 @@ public class Main {
                     .append(hostConnection.getRoomName()).append(";");
         }
         sendPacketToClient(socket, packetPayload.toString());
+    }
+
+    public void onBuildDestroy(Map<String,Object> packetContent, HostConnection hostConnection) {
+        if (hostConnection !=  null) {
+            System.out.println("BuildDestroy From Host");
+            // If this packet was sent from the host
+            // send Build or Destroy to all clients
+            broadcastToClients(hostConnection,(String) packetContent.get("Packet"));
+
+        } else {
+            // If this packet was sent from a client
+
+            HostConnection host = getHostFromClient((UUID) packetContent.get("SourceId"));
+
+            // Send it to the host
+            if (host != null) {
+                System.out.println("Sending BuildDestroy to host");
+                sendToHost(host, (String) packetContent.get("Packet"));
+            } else {
+                System.out.println("Error, host null while sending BuildDestroy");
+            }
+        }
+    }
+
+    public void onMapUpdate(String packet, HostConnection hostConnection) {
+        System.out.println("Broadcasting Map Update");
+        broadcastToClients(hostConnection, packet);
     }
 
     public void handlePacket(String packet, Socket socket) {
@@ -283,6 +310,16 @@ public class Main {
             case SERVER_LIST:
                 onServerList((UUID)packetContent.get("SourceId"), socket);
                 break;
+            case MAPUPDATE:
+                if (hostConnection != null) {
+                    // Only the Host can send Map Updates
+                    onMapUpdate((String) packetContent.get("Packet"), hostConnection);
+                }
+                break;
+            case BUILD:
+            case DESTROY:
+                onBuildDestroy(packetContent, hostConnection);
+                break;
             default:
                 return;
         }
@@ -291,7 +328,7 @@ public class Main {
     public void broadcastToClients(HostConnection host, String packet) {
         for (ClientConnection client : clientHost.keySet()) {
             UUID hostUuid = clientHost.get(client);
-            if (hostUuid.equals(host.getUuid())) {
+            if (!hostUuid.equals(host.getUuid())) {
                 continue;
             }
 
