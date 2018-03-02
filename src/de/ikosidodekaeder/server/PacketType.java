@@ -16,6 +16,8 @@ public enum PacketType {
     MAPUPDATE((byte) 0x07),
     TERMINATE((byte) 0x08),
     SERVER_LIST((byte) 0x09);
+    /*PLAYER_LOADED((byte) 0x0A),
+    HOST_GENERATING((byte) 0x0B);*/
 
     public byte ID;
 

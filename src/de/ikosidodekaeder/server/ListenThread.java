@@ -8,6 +8,7 @@ import java.io.InputStreamReader;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.util.Scanner;
+import java.util.UUID;
 
 /**
  * Created by Sven on 20.02.2018.
@@ -19,6 +20,8 @@ public class ListenThread implements Runnable {
     private Socket socket;
     private BufferedReader reader;
     private boolean running = true;
+
+    private UUID uuid;
 
     public ListenThread(Main owner, Socket socket) {
         this.owner = owner;
@@ -80,7 +83,7 @@ public class ListenThread implements Runnable {
                     System.out.println("================== STOPPING THREAD ==================");
                 } else {
                     System.out.println("Received packet " + receivedString.toString());
-                    owner.handlePacket(receivedString.toString(), socket);
+                    owner.handlePacket(receivedString.toString(), socket, this);
                 }
 
 
@@ -103,6 +106,35 @@ public class ListenThread implements Runnable {
             e.printStackTrace();
         }
 
+        HostConnection hostConnection = owner.getHost(uuid);
+        if (hostConnection != null) {
+            // This socket was to a host, broadcast a LEAVE to all clients
+            for (ClientConnection clientConnection : owner.getClientHost().keySet()) {
+                UUID hostUuid = owner.getClientHost().get(clientConnection);
+                if (!hostUuid.equals(this.uuid)) {
+                    continue;
+                }
+                if (clientConnection.getSocket().isClosed()) {
+                    continue;
+                }
+                System.out.println("##### Sent LEAVE to client " + clientConnection.getUuid());
+                owner.sendPacketToClient(clientConnection.getSocket(), PacketType.LEAVE.ID + ";"
+                        + uuid + ";0;"
+                        + clientConnection.getUuid() + ";true;");
+            }
+        } else {
+            hostConnection = owner.getHostFromClient(uuid);
+            if (hostConnection != null) {
+                System.out.println("##### Client " + uuid + " left the game");
+                owner.sendToHost(hostConnection, PacketType.LEAVE.ID + ";"
+                        + uuid + ";0;"
+                        + uuid + ";false;");
+            } else {
+                System.out.println("##### Could not find Host for this UUID");
+            }
+        }
+
+        owner.removeInactive();
     }
 
     public boolean isRunning() {
@@ -111,5 +143,13 @@ public class ListenThread implements Runnable {
 
     public void setRunning(boolean running) {
         this.running = running;
+    }
+
+    public UUID getUuid() {
+        return uuid;
+    }
+
+    public void setUuid(UUID uuid) {
+        this.uuid = uuid;
     }
 }
