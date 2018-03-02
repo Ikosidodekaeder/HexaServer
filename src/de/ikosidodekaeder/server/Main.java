@@ -68,12 +68,14 @@ public class Main {
         try {
             PacketType packetType = PacketType.valueOf(Byte.parseByte(items[0]));
             if (packetType == null) {
-                tmp.put("TypeId", null);    // Type of the packet
+                tmp.put("TypeId", "null");    // Type of the packet
+                return tmp;
             } else {
                 tmp.put("TypeId", packetType);    // Type of the packet
             }
         } catch (Exception e) {
-            tmp.put("TypeId", null);
+            tmp.put("TypeId", "null");
+            return tmp;
         }
 
         switch ((PacketType)tmp.get("TypeId")){
@@ -303,7 +305,7 @@ public class Main {
             }
         }
 
-        if (packetContent.get("TypeId") == null) {
+        if (packetContent.get("TypeId").equals("null")) {
             if (hostConnection != null) {
                 // This packet was sent from the host
                 broadcastToClients(hostConnection, (String) packetContent.get("Packet"));
